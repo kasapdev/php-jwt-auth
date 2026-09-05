@@ -1,6 +1,6 @@
 # php-jwt-auth
 
-[![CI](https://github.com/kasapdev/php-jwt-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/kasapdev/php-jwt-auth/actions/workflows/ci.yml)
+[![CI](https://github.com/kasapdev/php-jwt-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/kasapdev/php-jwt-auth/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![PHP](https://img.shields.io/badge/PHP-8.1%2B-777BB4?logo=php&logoColor=white)
 
 A zero-dependency PHP library for encoding and decoding JSON Web Tokens (JWT). Supports **HS256**
 (HMAC-SHA256) and **RS256** (RSA-SHA256), validates `exp`/`nbf` claims, and uses `hash_equals()`
