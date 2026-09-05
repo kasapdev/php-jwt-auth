@@ -1,0 +1,14 @@
+{
+    "name": "kasapdev/php-jwt-auth",
+    "description": "A zero-dependency PHP library for encoding and decoding JSON Web Tokens (HS256 and RS256), with expiry/not-before validation and constant-time signature checks.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kasapdev\\JwtAuth\\": "src/"
+        }
+    }
+}
