@@ -15,12 +15,14 @@ function check(string $label, bool $condition): void
 require_once __DIR__ . '/../src/JwtException.php';
 require_once __DIR__ . '/../src/InvalidTokenException.php';
 require_once __DIR__ . '/../src/InvalidSignatureException.php';
+require_once __DIR__ . '/../src/InvalidClaimException.php';
 require_once __DIR__ . '/../src/ExpiredTokenException.php';
 require_once __DIR__ . '/../src/Base64Url.php';
 require_once __DIR__ . '/../src/Jwt.php';
 
 use Kasapdev\JwtAuth\Base64Url;
 use Kasapdev\JwtAuth\ExpiredTokenException;
+use Kasapdev\JwtAuth\InvalidClaimException;
 use Kasapdev\JwtAuth\InvalidSignatureException;
 use Kasapdev\JwtAuth\InvalidTokenException;
 use Kasapdev\JwtAuth\Jwt;
@@ -287,6 +289,85 @@ try {
     $threw = true;
 }
 check('non-numeric "nbf" claim throws InvalidTokenException rather than being silently ignored', $threw);
+
+// --- iss / aud claim validation --------------------------------------------------------------
+
+$issuedToken = Jwt::encode(['sub' => '1', 'iss' => 'https://issuer.example', 'aud' => 'my-app'], $secret);
+
+$decoded = Jwt::decode($issuedToken, $secret, ['HS256'], issuer: 'https://issuer.example');
+check('decode with matching issuer succeeds', $decoded['sub'] === '1');
+
+$threw = false;
+try {
+    Jwt::decode($issuedToken, $secret, ['HS256'], issuer: 'https://someone-else.example');
+} catch (InvalidClaimException $e) {
+    $threw = true;
+}
+check('decode with mismatched issuer throws InvalidClaimException', $threw);
+
+$noIssToken = Jwt::encode(['sub' => '1'], $secret);
+$threw = false;
+try {
+    Jwt::decode($noIssToken, $secret, ['HS256'], issuer: 'https://issuer.example');
+} catch (InvalidClaimException $e) {
+    $threw = true;
+}
+check('decode requiring an issuer throws InvalidClaimException when "iss" is absent', $threw);
+
+$nonStringIssInput = $scalarHeader . '.' . Base64Url::encode(json_encode(['iss' => 42]));
+$nonStringIssToken = $nonStringIssInput . '.' . Base64Url::encode(hash_hmac('sha256', $nonStringIssInput, $secret, true));
+$threw = false;
+try {
+    Jwt::decode($nonStringIssToken, $secret, ['HS256'], issuer: 'https://issuer.example');
+} catch (InvalidTokenException $e) {
+    $threw = true;
+}
+check('non-string "iss" claim throws InvalidTokenException', $threw);
+
+$decoded = Jwt::decode($issuedToken, $secret, ['HS256'], audience: 'my-app');
+check('decode with matching string audience succeeds', $decoded['sub'] === '1');
+
+$decoded = Jwt::decode($issuedToken, $secret, ['HS256'], audience: ['other-app', 'my-app']);
+check('decode succeeds when audience list contains the expected value', $decoded['sub'] === '1');
+
+$threw = false;
+try {
+    Jwt::decode($issuedToken, $secret, ['HS256'], audience: 'other-app');
+} catch (InvalidClaimException $e) {
+    $threw = true;
+}
+check('decode with mismatched audience throws InvalidClaimException', $threw);
+
+$listAudToken = Jwt::encode(['sub' => '1', 'aud' => ['app-a', 'app-b']], $secret);
+$decoded = Jwt::decode($listAudToken, $secret, ['HS256'], audience: 'app-b');
+check('decode matches when token "aud" is an array containing the expected audience', $decoded['sub'] === '1');
+
+$noAudToken = Jwt::encode(['sub' => '1'], $secret);
+$threw = false;
+try {
+    Jwt::decode($noAudToken, $secret, ['HS256'], audience: 'my-app');
+} catch (InvalidClaimException $e) {
+    $threw = true;
+}
+check('decode requiring an audience throws InvalidClaimException when "aud" is absent', $threw);
+
+$nonStringAudInput = $scalarHeader . '.' . Base64Url::encode(json_encode(['aud' => ['ok', 42]]));
+$nonStringAudToken = $nonStringAudInput . '.' . Base64Url::encode(hash_hmac('sha256', $nonStringAudInput, $secret, true));
+$threw = false;
+try {
+    Jwt::decode($nonStringAudToken, $secret, ['HS256'], audience: 'ok');
+} catch (InvalidTokenException $e) {
+    $threw = true;
+}
+check('"aud" array containing a non-string element throws InvalidTokenException', $threw);
+
+$decoded = Jwt::decode($issuedToken, $secret, ['HS256'], issuer: 'https://issuer.example', audience: 'my-app');
+check('decode with both issuer and audience matching succeeds', $decoded['sub'] === '1');
+
+check(
+    'decode without issuer/audience arguments is unaffected (backward compatible)',
+    Jwt::decode($issuedToken, $secret)['sub'] === '1'
+);
 
 // --- Encoding RS256 with a malformed private key --------------------------------------------
 

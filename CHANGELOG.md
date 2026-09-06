@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.2.0] - 2026-09-06
+
+### Added
+
+- `Jwt::decode()` gained optional `issuer` and `audience` parameters for validating the
+  registered `iss` and `aud` claims, matching the existing `exp`/`nbf` validation style: opt in
+  by passing a value, and the claim must be present and match or a new `InvalidClaimException`
+  is thrown. `audience` accepts a single string or an array of acceptable values, matching
+  against a token `aud` that is itself a string or an array (RFC 7519 §4.1.3). Both parameters
+  default to `null` (no check), so existing calls are unaffected.
+- New `InvalidClaimException` (extends the common `JwtException` base) for this failure mode,
+  distinct from `InvalidTokenException` (structural malformation) and `ExpiredTokenException`
+  (time-based claims).
+
 ## [1.1.0] - 2026-09-06
 
 ### Added

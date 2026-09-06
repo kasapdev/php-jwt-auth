@@ -41,13 +41,22 @@ final class Jwt
      *
      * @param string $secret For HS256, the shared HMAC secret. For RS256, a PEM-encoded RSA public key.
      * @param string[] $allowedAlgos Algorithms this call will accept; the token's own "alg" header must be in this list.
+     * @param string|null $issuer If given, the token's "iss" claim must be present and equal to this value.
+     * @param string|string[]|null $audience If given, the token's "aud" claim (a single string or an array of
+     *     strings per RFC 7519 §4.1.3) must be present and contain at least one value from this list.
      *
      * @throws InvalidTokenException     if the token is malformed or uses a disallowed/unsupported algorithm.
      * @throws InvalidSignatureException if the signature does not verify.
      * @throws ExpiredTokenException     if "exp" is in the past or "nbf" is in the future.
+     * @throws InvalidClaimException     if "iss" or "aud" is required but missing, or does not match.
      */
-    public static function decode(string $token, string $secret, array $allowedAlgos = ['HS256']): array
-    {
+    public static function decode(
+        string $token,
+        string $secret,
+        array $allowedAlgos = ['HS256'],
+        ?string $issuer = null,
+        string|array|null $audience = null
+    ): array {
         $parts = explode('.', $token);
         if (count($parts) !== 3) {
             throw new InvalidTokenException('A JWT must have exactly three dot-separated segments.');
@@ -95,8 +104,55 @@ final class Jwt
             }
         }
 
+        if ($issuer !== null) {
+            self::checkIssuer($payload, $issuer);
+        }
+
+        if ($audience !== null) {
+            self::checkAudience($payload, $audience);
+        }
+
         /** @var array<string,mixed> $payload */
         return $payload;
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private static function checkIssuer(array $payload, string $issuer): void
+    {
+        if (!array_key_exists('iss', $payload)) {
+            throw new InvalidClaimException('Token has no "iss" claim, but an issuer was required.');
+        }
+
+        if (!is_string($payload['iss'])) {
+            throw new InvalidTokenException('Token "iss" claim must be a string.');
+        }
+
+        if ($payload['iss'] !== $issuer) {
+            throw new InvalidClaimException(sprintf('Token issuer "%s" does not match the expected issuer.', $payload['iss']));
+        }
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @param string|string[] $audience
+     */
+    private static function checkAudience(array $payload, string|array $audience): void
+    {
+        if (!array_key_exists('aud', $payload)) {
+            throw new InvalidClaimException('Token has no "aud" claim, but an audience was required.');
+        }
+
+        $tokenAudiences = is_string($payload['aud']) ? [$payload['aud']] : $payload['aud'];
+        if (!is_array($tokenAudiences) || array_filter($tokenAudiences, 'is_string') !== $tokenAudiences) {
+            throw new InvalidTokenException('Token "aud" claim must be a string or an array of strings.');
+        }
+
+        $expected = is_array($audience) ? $audience : [$audience];
+        if (!array_intersect($expected, $tokenAudiences)) {
+            throw new InvalidClaimException('Token audience does not match any expected audience.');
+        }
     }
 
     private static function sign(string $data, string $secret, string $algo): string
