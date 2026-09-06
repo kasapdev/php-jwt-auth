@@ -226,5 +226,77 @@ try {
 }
 check('signature differing by a single bit is rejected', $threw);
 
+// --- Header missing "alg" entirely --------------------------------------------------------
+
+$noAlgHeader = Base64Url::encode(json_encode(['typ' => 'JWT']));
+$threw = false;
+try {
+    Jwt::decode($noAlgHeader . '.' . $p . '.' . $s, $secret);
+} catch (InvalidTokenException $e) {
+    $threw = true;
+}
+check('token with a header missing "alg" entirely throws InvalidTokenException', $threw);
+
+// --- Non-string "alg" in header ------------------------------------------------------------
+
+$numericAlgHeader = Base64Url::encode(json_encode(['typ' => 'JWT', 'alg' => 256]));
+$threw = false;
+try {
+    Jwt::decode($numericAlgHeader . '.' . $p . '.' . $s, $secret);
+} catch (InvalidTokenException $e) {
+    $threw = true;
+}
+check('token with a non-string "alg" header value throws InvalidTokenException', $threw);
+
+// --- Payload that decodes to a JSON scalar, not an object ----------------------------------
+
+$scalarPayloadToken = Jwt::encode(['x' => 1], $secret);
+[$scalarHeader] = explode('.', $scalarPayloadToken);
+$rawScalarPayload = Base64Url::encode('42');
+// Re-sign so this failure is specifically about payload shape, not signature mismatch.
+$reSignedInput = $scalarHeader . '.' . $rawScalarPayload;
+$reSignature = Base64Url::encode(hash_hmac('sha256', $reSignedInput, $secret, true));
+$scalarToken = $reSignedInput . '.' . $reSignature;
+
+$threw = false;
+try {
+    Jwt::decode($scalarToken, $secret);
+} catch (InvalidTokenException $e) {
+    $threw = true;
+}
+check('token whose payload is a JSON scalar (not an object/array) throws InvalidTokenException', $threw);
+
+// --- Non-numeric exp / nbf claims -----------------------------------------------------------
+
+$badExpInput = $scalarHeader . '.' . Base64Url::encode(json_encode(['exp' => 'not-a-number']));
+$badExpToken = $badExpInput . '.' . Base64Url::encode(hash_hmac('sha256', $badExpInput, $secret, true));
+$threw = false;
+try {
+    Jwt::decode($badExpToken, $secret);
+} catch (InvalidTokenException $e) {
+    $threw = true;
+}
+check('non-numeric "exp" claim throws InvalidTokenException rather than being silently ignored', $threw);
+
+$badNbfInput = $scalarHeader . '.' . Base64Url::encode(json_encode(['nbf' => 'not-a-number']));
+$badNbfToken = $badNbfInput . '.' . Base64Url::encode(hash_hmac('sha256', $badNbfInput, $secret, true));
+$threw = false;
+try {
+    Jwt::decode($badNbfToken, $secret);
+} catch (InvalidTokenException $e) {
+    $threw = true;
+}
+check('non-numeric "nbf" claim throws InvalidTokenException rather than being silently ignored', $threw);
+
+// --- Encoding RS256 with a malformed private key --------------------------------------------
+
+$threw = false;
+try {
+    Jwt::encode(['a' => 1], 'this-is-not-a-pem-key', 'RS256');
+} catch (InvalidTokenException $e) {
+    $threw = true;
+}
+check('encoding RS256 with a malformed PEM key throws InvalidTokenException', $threw);
+
 echo $__failures === 0 ? "\nAll tests passed.\n" : "\n$__failures test(s) FAILED.\n";
 exit($__failures === 0 ? 0 : 1);
