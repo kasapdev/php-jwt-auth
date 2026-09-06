@@ -20,6 +20,7 @@ Or just require the files directly:
 require_once 'src/JwtException.php';
 require_once 'src/InvalidTokenException.php';
 require_once 'src/InvalidSignatureException.php';
+require_once 'src/InvalidClaimException.php';
 require_once 'src/ExpiredTokenException.php';
 require_once 'src/Base64Url.php';
 require_once 'src/Jwt.php';
@@ -77,12 +78,42 @@ $token = Jwt::encode(['sub' => '1'], $secret, 'HS256', ['kid' => 'key-2024-01'])
 what's passed in `$header` — a caller cannot smuggle a different algorithm into the header than
 the one actually used to sign the token.
 
+### Issuer / audience validation
+
+```php
+use Kasapdev\JwtAuth\InvalidClaimException;
+
+$token = Jwt::encode([
+    'sub' => 'user-42',
+    'iss' => 'https://auth.example.com',
+    'aud' => 'billing-api',
+], $secret);
+
+try {
+    $payload = Jwt::decode(
+        $token,
+        $secret,
+        allowedAlgos: ['HS256'],
+        issuer: 'https://auth.example.com',
+        audience: 'billing-api',
+    );
+} catch (InvalidClaimException $e) {
+    // "iss" doesn't match, or "aud" doesn't contain an expected value
+}
+```
+
+`issuer` and `audience` are opt-in: pass them and `decode()` requires the token to carry a
+matching `iss` / `aud` claim, or it throws `InvalidClaimException`. Leave them `null` (the
+default) and `iss`/`aud` are ignored entirely, same as before. `audience` accepts either a single
+string or an array of acceptable values, and matches if the token's own `aud` — a string or an
+array per RFC 7519 §4.1.3 — contains any of them.
+
 ## API
 
 ### `Jwt`
 
 - `Jwt::encode(array $payload, string $secret, string $algo = 'HS256', array $header = []): string`
-- `Jwt::decode(string $token, string $secret, array $allowedAlgos = ['HS256']): array`
+- `Jwt::decode(string $token, string $secret, array $allowedAlgos = ['HS256'], ?string $issuer = null, string|array|null $audience = null): array`
 
 For RS256, `$secret` in `encode()` is a PEM-encoded RSA **private** key, and in `decode()` a
 PEM-encoded RSA **public** key.
@@ -97,10 +128,13 @@ PEM-encoded RSA **public** key.
 All extend the common `JwtException` base, so you can catch broadly or specifically:
 
 - `InvalidTokenException` — malformed token (wrong segment count, invalid base64url, invalid
-  JSON, missing/disallowed `alg`, or an invalid signing/verification key)
+  JSON, missing/disallowed `alg`, a non-scalar/wrong-type registered claim, or an invalid
+  signing/verification key)
 - `InvalidSignatureException` — the token is well-formed but its signature does not verify
 - `ExpiredTokenException` — the signature is valid but `exp` is in the past or `nbf` is in the
   future
+- `InvalidClaimException` — the signature is valid but an opted-into `issuer`/`audience` check
+  failed: `iss`/`aud` is missing, or doesn't match
 
 ## Security notes
 
@@ -119,7 +153,7 @@ php tests/run.php
 ```
 
 The suite covers HS256 and RS256 round trips, tampered signatures, wrong secrets/keys, expired
-and not-yet-valid tokens, and a range of malformed-token inputs. If the environment's OpenSSL
+and not-yet-valid tokens, issuer/audience matching, and a range of malformed-token inputs. If the environment's OpenSSL
 configuration can't generate an RSA key pair (some minimal PHP installs need `OPENSSL_CONF`
 pointed at a valid `openssl.cnf` before `openssl_pkey_new()` will work), the RS256 tests are
 skipped with a `[SKIP]` line rather than failing — HS256 coverage runs unconditionally either way.
