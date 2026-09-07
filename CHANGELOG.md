@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.3.0] - 2026-09-07
+
+### Added
+
+- `Jwt::decode()`'s `$secret` parameter now accepts `string|array` — either a single
+  secret/key (as before) or an array of candidate secrets/keys, to support signing-key
+  rotation. When given an array, each candidate is tried in order (through the same
+  constant-time `hash_equals()`/`openssl_verify()` path as a single key) until one verifies
+  the token's signature; if none do, `InvalidSignatureException` is thrown, same as for a
+  single wrong key. This lets a rotated secret be deployed while still accepting tokens
+  signed under the previous one, by decoding against `[$newSecret, $oldSecret]`. Passing a
+  single string continues to work exactly as before — fully backward compatible.
+
 ## [1.2.0] - 2026-09-06
 
 ### Added

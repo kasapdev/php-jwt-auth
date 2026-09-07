@@ -68,6 +68,53 @@ $token = Jwt::encode(['sub' => 'user-42'], $privateKeyPem, 'RS256');
 $payload = Jwt::decode($token, $publicKeyPem, ['RS256']);
 ```
 
+### Full round trip: issue, hand out, verify on the next request
+
+A typical flow is one process issuing a token and a later, separate request verifying it — the
+example below keeps them apart to make that explicit:
+
+```php
+use Kasapdev\JwtAuth\Jwt;
+use Kasapdev\JwtAuth\ExpiredTokenException;
+use Kasapdev\JwtAuth\InvalidClaimException;
+use Kasapdev\JwtAuth\InvalidSignatureException;
+use Kasapdev\JwtAuth\InvalidTokenException;
+
+$secret = 'a-long-random-shared-secret';
+
+// --- Login endpoint: issue a token ---
+$accessToken = Jwt::encode([
+    'sub' => 'user-42',
+    'iss' => 'https://auth.example.com',
+    'aud' => 'billing-api',
+    'iat' => time(),
+    'exp' => time() + 900, // 15 minutes
+], $secret);
+
+// ...the client stores $accessToken and sends it back as, e.g., an Authorization: Bearer header.
+
+// --- A later request to a protected endpoint: verify the token ---
+function authenticate(string $bearerToken, string $secret): array
+{
+    try {
+        return Jwt::decode(
+            $bearerToken,
+            $secret,
+            allowedAlgos: ['HS256'],
+            issuer: 'https://auth.example.com',
+            audience: 'billing-api',
+        );
+    } catch (ExpiredTokenException $e) {
+        throw new RuntimeException('Session expired, please log in again.', previous: $e);
+    } catch (InvalidSignatureException|InvalidClaimException|InvalidTokenException $e) {
+        throw new RuntimeException('Not authenticated.', previous: $e);
+    }
+}
+
+$user = authenticate($accessToken, $secret);
+echo $user['sub']; // "user-42"
+```
+
 ### Custom header fields
 
 ```php
@@ -108,15 +155,49 @@ default) and `iss`/`aud` are ignored entirely, same as before. `audience` accept
 string or an array of acceptable values, and matches if the token's own `aud` — a string or an
 array per RFC 7519 §4.1.3 — contains any of them.
 
+## Key Rotation
+
+`Jwt::decode()`'s `$secret` parameter also accepts an **array** of candidate secrets/keys instead
+of a single string. This lets you rotate a signing secret without invalidating tokens that were
+already issued under the old one: put the new secret first (the common case, since most incoming
+tokens will already use it) and the old secret(s) after it, and `decode()` tries each candidate in
+turn — with the same constant-time comparison per attempt — until one verifies.
+
+```php
+use Kasapdev\JwtAuth\Jwt;
+use Kasapdev\JwtAuth\InvalidSignatureException;
+
+$oldSecret = 'secret-issued-before-the-rotation';
+$newSecret = 'freshly-rotated-secret';
+
+// A token issued before the rotation, signed with the old secret.
+$oldToken = Jwt::encode(['sub' => 'user-42'], $oldSecret);
+
+// After rotating, decode against both: new secret first, old secret(s) after.
+$payload = Jwt::decode($oldToken, [$newSecret, $oldSecret]);
+echo $payload['sub']; // "user-42" -- still verifies, even though $newSecret alone wouldn't work
+
+try {
+    Jwt::decode($oldToken, [$newSecret, 'some-other-secret']);
+} catch (InvalidSignatureException $e) {
+    // $oldSecret isn't in the candidate list, so no candidate verifies.
+}
+```
+
+This works the same way for RS256: pass an array of PEM-encoded public keys instead of a single
+one, and each is tried in turn. A single string `$secret` continues to work exactly as before —
+this is purely additive.
+
 ## API
 
 ### `Jwt`
 
 - `Jwt::encode(array $payload, string $secret, string $algo = 'HS256', array $header = []): string`
-- `Jwt::decode(string $token, string $secret, array $allowedAlgos = ['HS256'], ?string $issuer = null, string|array|null $audience = null): array`
+- `Jwt::decode(string $token, string|array $secret, array $allowedAlgos = ['HS256'], ?string $issuer = null, string|array|null $audience = null): array`
 
 For RS256, `$secret` in `encode()` is a PEM-encoded RSA **private** key, and in `decode()` a
-PEM-encoded RSA **public** key.
+PEM-encoded RSA **public** key. In `decode()`, `$secret` may also be an array of candidate
+secrets/keys for key rotation — see [Key Rotation](#key-rotation).
 
 ### `Base64Url`
 
@@ -153,7 +234,8 @@ php tests/run.php
 ```
 
 The suite covers HS256 and RS256 round trips, tampered signatures, wrong secrets/keys, expired
-and not-yet-valid tokens, issuer/audience matching, and a range of malformed-token inputs. If the environment's OpenSSL
+and not-yet-valid tokens, issuer/audience matching, key rotation via candidate-secret arrays, and
+a range of malformed-token inputs. If the environment's OpenSSL
 configuration can't generate an RSA key pair (some minimal PHP installs need `OPENSSL_CONF`
 pointed at a valid `openssl.cnf` before `openssl_pkey_new()` will work), the RS256 tests are
 skipped with a `[SKIP]` line rather than failing — HS256 coverage runs unconditionally either way.

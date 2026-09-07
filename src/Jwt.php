@@ -39,20 +39,24 @@ final class Jwt
     /**
      * Decode and verify a JWT, returning its payload as an array.
      *
-     * @param string $secret For HS256, the shared HMAC secret. For RS256, a PEM-encoded RSA public key.
+     * @param string|string[] $secret For HS256, the shared HMAC secret. For RS256, a PEM-encoded RSA public key.
+     *     Also accepts an array of candidate secrets/keys to support key rotation: each candidate is tried in
+     *     order (constant-time per attempt) until one verifies the signature, so tokens signed under an older
+     *     secret keep decoding as long as that secret is still included in the array.
      * @param string[] $allowedAlgos Algorithms this call will accept; the token's own "alg" header must be in this list.
      * @param string|null $issuer If given, the token's "iss" claim must be present and equal to this value.
      * @param string|string[]|null $audience If given, the token's "aud" claim (a single string or an array of
      *     strings per RFC 7519 §4.1.3) must be present and contain at least one value from this list.
      *
      * @throws InvalidTokenException     if the token is malformed or uses a disallowed/unsupported algorithm.
-     * @throws InvalidSignatureException if the signature does not verify.
+     * @throws InvalidSignatureException if the signature does not verify against $secret, or (when $secret is an
+     *     array) against any of the candidate secrets/keys.
      * @throws ExpiredTokenException     if "exp" is in the past or "nbf" is in the future.
      * @throws InvalidClaimException     if "iss" or "aud" is required but missing, or does not match.
      */
     public static function decode(
         string $token,
-        string $secret,
+        string|array $secret,
         array $allowedAlgos = ['HS256'],
         ?string $issuer = null,
         string|array|null $audience = null
@@ -82,7 +86,7 @@ final class Jwt
         }
 
         $signingInput = $headerEncoded . '.' . $payloadEncoded;
-        self::verify($signingInput, $signature, $secret, $algo);
+        self::verifyAnyKey($signingInput, $signature, $secret, $algo);
 
         $now = time();
 
@@ -162,6 +166,35 @@ final class Jwt
             'RS256' => self::signRs256($data, $secret),
             default => throw new InvalidTokenException("Unsupported algorithm: {$algo}"),
         };
+    }
+
+    /**
+     * Verify a signature against one key, or (for key rotation) an array of candidate keys, trying each in
+     * order until one verifies. Every attempt goes through the same constant-time comparison as a single-key
+     * verify; a candidate that doesn't match simply raises InvalidSignatureException, which is caught here so
+     * the next candidate can be tried.
+     *
+     * @param string|string[] $keys
+     */
+    private static function verifyAnyKey(string $data, string $signature, string|array $keys, string $algo): void
+    {
+        $candidates = is_array($keys) ? $keys : [$keys];
+
+        if ($candidates === []) {
+            throw new InvalidSignatureException('No candidate keys were provided for signature verification.');
+        }
+
+        foreach ($candidates as $candidate) {
+            try {
+                self::verify($data, $signature, $candidate, $algo);
+
+                return;
+            } catch (InvalidSignatureException) {
+                // Try the next candidate key.
+            }
+        }
+
+        throw new InvalidSignatureException('Signature did not verify against any candidate key.');
     }
 
     private static function verify(string $data, string $signature, string $secret, string $algo): void

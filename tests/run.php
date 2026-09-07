@@ -369,6 +369,44 @@ check(
     Jwt::decode($issuedToken, $secret)['sub'] === '1'
 );
 
+// --- Key rotation (decode against an array of candidate secrets) ---------------------------
+
+$oldSecret = 'old-rotation-secret';
+$newSecret = 'new-rotation-secret';
+$rotationPayload = ['sub' => 'rotation-user', 'role' => 'member'];
+
+$oldSignedToken = Jwt::encode($rotationPayload, $oldSecret);
+
+$rotatedDecoded = Jwt::decode($oldSignedToken, [$newSecret, $oldSecret]);
+check(
+    'decode against [newSecret, oldSecret] verifies a token signed with the old secret and recovers its claims',
+    $rotatedDecoded == $rotationPayload
+);
+
+$threw = false;
+try {
+    Jwt::decode($oldSignedToken, [$newSecret, 'some-other-secret']);
+} catch (InvalidSignatureException $e) {
+    $threw = true;
+}
+check(
+    'decode against a candidate array that does not include the signing secret throws InvalidSignatureException',
+    $threw
+);
+
+// A single string $secret must still behave exactly as before (backward compatibility).
+$singleSecretDecoded = Jwt::decode($oldSignedToken, $oldSecret);
+check('decode with a single string secret is unaffected by the array support', $singleSecretDecoded == $rotationPayload);
+
+// The new secret alone (without the old one) must NOT decode an old token.
+$threw = false;
+try {
+    Jwt::decode($oldSignedToken, $newSecret);
+} catch (InvalidSignatureException $e) {
+    $threw = true;
+}
+check('decode with only the new secret (old token, single string) throws InvalidSignatureException', $threw);
+
 // --- Encoding RS256 with a malformed private key --------------------------------------------
 
 $threw = false;
